@@ -15,19 +15,16 @@ RETRIES = 10
 def mapper(field, mapping, min_v=0.0, max_v=1.0):
     def fieldfunc(item):
         try:
-            value = item.get(field, None)
+            value = item.get('echonest_{}'.format(field), None)
             if value is None:
-                return u'not set'
+                return None
             value = float(value)
-            inc = (max_v - min_v) / len(mapping)
-            i = min_v
-            for m in mapping:
-                i += inc
-                if value < i:
-                    return m
-            return m # in case of floating point precision problems
-        except ValueError:
-            return item.get(field)
+            return mapping[min(
+                    len(mapping) - 1,
+                    int((value - min_v) / ((max_v - min_v) / len(mapping)))
+                )]
+        except ValueError, TypeError:
+            return None
     return fieldfunc
 
 def _splitstrip(string):
@@ -35,10 +32,30 @@ def _splitstrip(string):
     return [ s.strip() for s in string.split(u',') ]
 
 class MappingQuery(library.FieldQuery):
-    @classmethod
-    def value_match(self, pattern, val):
-        log.info(u'{0} = {1}'.format(pattern, val))
-        return pattern == val
+    def __init__(self, field, pattern, fast=True):
+        print(field, pattern, fast)
+        super(MappingQuery, self).__init__(field, pattern, fast)
+        self.mapping = _splitstrip(pattern)
+
+    def match(self, item):
+        return item.get(self.field) in self.mapping
+
+class GTQuery(library.FieldQuery):
+    def match(self, item):
+        try:
+            return (float(item.get('echonest_{}'.format(self.field))) >
+            float(self.pattern))
+        except TypeError:
+            return False
+
+class LTQuery(library.FieldQuery):
+    def match(self, item):
+        try:
+            return (float(item.get('echonest_{}'.format(self.field))) <
+            float(self.pattern))
+        except TypeError:
+            return False
+
 
 class EchonestMetadataPlugin(plugins.BeetsPlugin):
     _songs = {}
@@ -89,7 +106,9 @@ class EchonestMetadataPlugin(plugins.BeetsPlugin):
 
     def queries(self):
         return {
-                'E' : MappingQuery
+                '[' : MappingQuery,
+                '<' : LTQuery,
+                '>' : GTQuery,
         }
 
     def _echofun(self, func, **kwargs):
@@ -100,6 +119,9 @@ class EchonestMetadataPlugin(plugins.BeetsPlugin):
                 if e.code == 3:
                     # reached access limit per minute
                     time.sleep(RETRY_INTERVAL)
+                elif e.code == 5:
+                    # specified identifier does not exist
+                    return None
                 else:
                     log.error(u'echonest: {0}'.format(e.args[0][0]))
                     return None
@@ -122,18 +144,20 @@ class EchonestMetadataPlugin(plugins.BeetsPlugin):
                 item['echonest_fingerprint'] = code[0]['code']
                 item.write()
             except Exception as exc:
-                log.error('echonest: fingerprinting failed: {0}: {1}'
+                log.error(u'echonest: fingerprinting failed: {0}: {1}'
                           .format(item.path, str(exc)))
+                return None
         log.debug('echonest: fingerprinted {0}'.format(item.path))
         return item.echonest_fingerprint
 
     def analyze(self, item):
+        log.info(u'echonest: uploading file for analysis')
         try:
             track = self._echofun(pyechonest.track.track_from_filename,
                     filename=item.path)
-            self._echofun(pyechonest.song.profile, track_ids=[track.id])
+            return self._echofun(pyechonest.song.profile, track_ids=[track.id])
         except Exception as exc:
-            log.error('echonest: analysis failed: {0}: {1}'
+            log.error(u'echonest: analysis failed: {0}: {1}'
                       .format(util.syspath(item.path), str(exc)))
 
     def identify(self, item):
@@ -143,18 +167,19 @@ class EchonestMetadataPlugin(plugins.BeetsPlugin):
                 raise Exception(u'no songs found')
             return max(songs, key=lambda s: s.score)
         except Exception as exc:
-            log.error('echonest: identification failed: {0}: {1}'
+            log.error(u'echonest: identification failed: {0}: {1}'
                       .format(util.syspath(item.path), str(exc)))
 
     def search(self, item):
         try:
             songs = self._echofun(pyechonest.song.search, title=item.title,
-                    artist=item.artist, buckets=['id:musicbrainz', 'tracks'])
+                    results=100, artist=item.artist,
+                    buckets=['id:musicbrainz', 'tracks'])
             pick = None
             if songs:
                 min_dist = item.length
                 for song in songs:
-                    if song.artist.name.lower() == item.artist.lower() \
+                    if song.artist_name.lower() == item.artist.lower() \
                             and song.title.lower() == item.title.lower():
                         dist = abs(item.length - song.audio_summary['duration'])
                         if dist < min_dist:
@@ -165,8 +190,9 @@ class EchonestMetadataPlugin(plugins.BeetsPlugin):
             log.info(u'echonest: candidate distance {0}'.format(min_dist))
             return pick
         except Exception as exc:
-            log.error('echonest: search failed: {0}: {1}'
+            log.error(u'echonest: search failed: {0}: {1}'
                       .format(util.syspath(item.path), str(exc)))
+            return None
 
     def profile(self, item):
         try:
@@ -174,26 +200,31 @@ class EchonestMetadataPlugin(plugins.BeetsPlugin):
                 raise Exception(u'musicbrainz ID not available')
             mbid = 'musicbrainz:track:{0}'.format(item.mb_trackid)
             track = self._echofun(pyechonest.track.track_from_id, identifier=mbid)
+            if not track:
+                raise Exception(u'could not get track from ID')
             songs = self._echofun(pyechonest.song.profile, ids=track.song_id,
                     buckets=['id:musicbrainz', 'audio_summary'])
+            if not songs:
+                raise Exception(u'could not get songs from track ID')
             # FIXME: can we trust this or should we double check duration?
             return songs[0]
         except Exception as exc:
-            log.error('echonest: profile failed: {0}: {1}'
+            log.error(u'echonest: profile failed: {0}: {1}'
                       .format(util.syspath(item.path), str(exc)))
+            return None
 
     def fetch_song(self, item):
         for method in [self.profile, self.search, self.identify, self.analyze]:
             try:
                 song = method(item)
-                if song:
-                    log.debug('echonest: got song through {0}: {1} - {2} [{3}]'
+                if not song is None:
+                    log.debug(u'echonest: got song through {0}: {1} - {2} [{3}]'
                               .format(method.im_func.func_name,
                               song.artist_name, song.title,
                               song.audio_summary['duration']))
                     return song
             except Exception as exc:
-                log.error('echonest: tagging: {0}: {1}'
+                log.error(u'echonest: {0}: {1}'
                           .format(util.syspath(item.path), str(exc)))
 
     def apply_metadata(self, item):
@@ -202,7 +233,7 @@ class EchonestMetadataPlugin(plugins.BeetsPlugin):
             for k, v in self._songs[item.path].audio_summary.iteritems():
                 if k in self._attributes:
                     log.debug(u'echonest: metadata: {0} = {1}'.format(k, v))
-                    item[k] = v
+                    item['echonest_{}'.format(k)] = v
             if config['import']['write'].get(bool):
                 log.info(u'echonest: writing metadata: {0}'
                          .format(util.displayable_path(item.path)))
