@@ -226,6 +226,7 @@ class EchonestMetadataPlugin(plugins.BeetsPlugin):
             except Exception as exc:
                 log.error(u'echonest: {0}: {1}'
                           .format(util.syspath(item.path), str(exc)))
+        return None
 
     def apply_metadata(self, item):
         if item.path in self._songs:
@@ -247,7 +248,9 @@ class EchonestMetadataPlugin(plugins.BeetsPlugin):
     def fetch_song_task(self, task, session):
         items = task.items if task.is_album else [task.item]
         for item in items:
-            self._songs[item.path] = self.fetch_song(item)
+            song = self.fetch_song(item)
+            if not song is None:
+                self._songs[item.path] = self.fetch_song(item)
 
     def apply_metadata_task(self, task, session):
         for item in task.imported_items():
