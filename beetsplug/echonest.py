@@ -178,24 +178,29 @@ class EchonestMetadataPlugin(plugins.BeetsPlugin):
         except Exception as exc:
             log.error(u'echonest: identification failed: {0}'.format(str(exc)))
 
+    def _pick_song(self, songs, item):
+        pick = None
+        if songs:
+            min_dist = item.length
+            for song in songs:
+                if song.artist_name.lower() == item.artist.lower() \
+                        and song.title.lower() == item.title.lower():
+                    dist = abs(item.length - song.audio_summary['duration'])
+                    if dist < min_dist:
+                        min_dist = dist
+                        pick = song
+            if min_dist > 1.0:
+                return None
+        return pick
+
     def search(self, item):
         try:
             songs = self._echofun(pyechonest.song.search, title=item.title,
                     results=100, artist=item.artist,
                     buckets=['id:musicbrainz', 'tracks'])
-            pick = None
-            if songs:
-                min_dist = item.length
-                for song in songs:
-                    if song.artist_name.lower() == item.artist.lower() \
-                            and song.title.lower() == item.title.lower():
-                        dist = abs(item.length - song.audio_summary['duration'])
-                        if dist < min_dist:
-                            min_dist = dist
-                            pick = song
+            pick = self._pick_song(songs, item)
             if pick is None:
-                raise Exception(u'no songs found')
-            log.info(u'echonest: candidate distance {0}'.format(min_dist))
+                raise Exception(u'no (matching) songs found')
             return pick
         except Exception as exc:
             log.error(u'echonest: search failed: {0}'.format(str(exc)))
@@ -217,8 +222,9 @@ class EchonestMetadataPlugin(plugins.BeetsPlugin):
                     buckets=['id:musicbrainz', 'audio_summary'])
             if not songs:
                 raise Exception(u'could not get songs from track ID')
-            # FIXME: can we trust this or should we double check duration?
-            return songs[0]
+            # FIXME: can we trust this or should we double check duration?  We
+            # can't trust it :( durations can differ significantly
+            return self._pick_song(songs, item)
         except Exception as exc:
             log.debug(u'echonest: profile failed: {0}'.format(str(exc)))
             return None
