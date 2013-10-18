@@ -2,7 +2,7 @@ import time
 import logging
 import socket
 
-from beets import util, config, plugins, ui
+from beets import util, config, plugins, ui, library
 import pyechonest
 import pyechonest.song
 import pyechonest.track
@@ -33,6 +33,12 @@ def mapper(field, mapping, min_v=0.0, max_v=1.0):
 def _splitstrip(string):
     """Split string at comma and return the stripped values as array."""
     return [ s.strip() for s in string.split(u',') ]
+
+class MappingQuery(library.FieldQuery):
+    @classmethod
+    def value_match(self, pattern, val):
+        log.info(u'{0} = {1}'.format(pattern, val))
+        return pattern == val
 
 class EchonestMetadataPlugin(plugins.BeetsPlugin):
     _songs = {}
@@ -80,6 +86,11 @@ class EchonestMetadataPlugin(plugins.BeetsPlugin):
                 mapping = _splitstrip(
                         config['echonest'][key].get(unicode))
             self.template_fields[attr] = mapper(attr, mapping)
+
+    def queries(self):
+        return {
+                'E' : MappingQuery
+        }
 
     def _echofun(self, func, **kwargs):
         for i in range(RETRIES):
