@@ -118,9 +118,11 @@ class EchonestMetadataPlugin(plugins.BeetsPlugin):
             except pyechonest.util.EchoNestAPIError as e:
                 if e.code == 3:
                     # reached access limit per minute
+                    # log.debug(u'echonest: {}'.format(e))
                     time.sleep(RETRY_INTERVAL)
                 elif e.code == 5:
                     # specified identifier does not exist
+                    # log.debug(u'echonest: {}'.format(e))
                     return None
                 else:
                     log.error(u'echonest: {0}'.format(e.args[0][0]))
@@ -144,31 +146,37 @@ class EchonestMetadataPlugin(plugins.BeetsPlugin):
                 item['echonest_fingerprint'] = code[0]['code']
                 item.write()
             except Exception as exc:
-                log.error(u'echonest: fingerprinting failed: {0}: {1}'
-                          .format(item.path, str(exc)))
+                log.error(u'echonest: fingerprinting failed: {0}'
+                        .format(str(exc)))
                 return None
-        log.debug('echonest: fingerprinted {0}'.format(item.path))
-        return item.echonest_fingerprint
+        return item.get('echonest_fingerprint')
 
     def analyze(self, item):
-        log.info(u'echonest: uploading file for analysis')
         try:
             track = self._echofun(pyechonest.track.track_from_filename,
                     filename=item.path)
-            return self._echofun(pyechonest.song.profile, track_ids=[track.id])
+            if track is None:
+                raise Exception(u'failed to upload file')
+            songs = self._echofun(pyechonest.song.profile,
+                    ids=[track.song_id], track_ids=[track.id],
+                    buckets=['audio_summary'])
+            if songs is None:
+                raise Exception(u'failed to retrieve info from upload')
+            return songs[0]
         except Exception as exc:
-            log.error(u'echonest: analysis failed: {0}: {1}'
-                      .format(util.syspath(item.path), str(exc)))
+            log.error(u'echonest: analysis failed: {0}'.format(str(exc)))
 
     def identify(self, item):
         try:
-            songs = self._echofun(pyechonest.song.identify, code=self.fingerprint(item))
+            code = self.fingerprint(item)
+            if code is None:
+                raise Exception(u'can not identify without a fingerprint')
+            songs = self._echofun(pyechonest.song.identify, code=code)
             if not songs:
                 raise Exception(u'no songs found')
             return max(songs, key=lambda s: s.score)
         except Exception as exc:
-            log.error(u'echonest: identification failed: {0}: {1}'
-                      .format(util.syspath(item.path), str(exc)))
+            log.error(u'echonest: identification failed: {0}'.format(str(exc)))
 
     def search(self, item):
         try:
@@ -190,27 +198,29 @@ class EchonestMetadataPlugin(plugins.BeetsPlugin):
             log.info(u'echonest: candidate distance {0}'.format(min_dist))
             return pick
         except Exception as exc:
-            log.error(u'echonest: search failed: {0}: {1}'
-                      .format(util.syspath(item.path), str(exc)))
+            log.error(u'echonest: search failed: {0}'.format(str(exc)))
             return None
 
     def profile(self, item):
         try:
-            if not item.mb_trackid:
-                raise Exception(u'musicbrainz ID not available')
-            mbid = 'musicbrainz:track:{0}'.format(item.mb_trackid)
-            track = self._echofun(pyechonest.track.track_from_id, identifier=mbid)
-            if not track:
-                raise Exception(u'could not get track from ID')
-            songs = self._echofun(pyechonest.song.profile, ids=track.song_id,
+            if item.get('echonest_id', None) is None:
+                if not item.mb_trackid:
+                    raise Exception(u'musicbrainz ID not available')
+                mbid = 'musicbrainz:track:{0}'.format(item.mb_trackid)
+                track = self._echofun(pyechonest.track.track_from_id, identifier=mbid)
+                if not track:
+                    raise Exception(u'could not get track from ID')
+                ids = track.song_id
+            else:
+                ids = item.get('echonest_id')
+            songs = self._echofun(pyechonest.song.profile, ids=ids,
                     buckets=['id:musicbrainz', 'audio_summary'])
             if not songs:
                 raise Exception(u'could not get songs from track ID')
             # FIXME: can we trust this or should we double check duration?
             return songs[0]
         except Exception as exc:
-            log.error(u'echonest: profile failed: {0}: {1}'
-                      .format(util.syspath(item.path), str(exc)))
+            log.debug(u'echonest: profile failed: {0}'.format(str(exc)))
             return None
 
     def fetch_song(self, item):
@@ -224,8 +234,7 @@ class EchonestMetadataPlugin(plugins.BeetsPlugin):
                               song.audio_summary['duration']))
                     return song
             except Exception as exc:
-                log.error(u'echonest: {0}: {1}'
-                          .format(util.syspath(item.path), str(exc)))
+                log.debug(u'echonest: profile failed: {0}'.format(str(exc)))
         return None
 
     def apply_metadata(self, item):
@@ -242,8 +251,7 @@ class EchonestMetadataPlugin(plugins.BeetsPlugin):
                 if item._lib:
                     item.store()
         else:
-            log.warn(u'echonest: no metadata available: {0}'.
-                     format(util.displayable_path(item.path)))
+            log.warn(u'echonest: no metadata available')
 
     def fetch_song_task(self, task, session):
         items = task.items if task.is_album else [task.item]
@@ -261,11 +269,13 @@ class EchonestMetadataPlugin(plugins.BeetsPlugin):
             help='Fetch metadata from the EchoNest')
 
         def func(lib, opts, args):
-          for item in lib.items(ui.decargs(args)):
-              log.info(u'echonest: {0} - {1} [{2}]'.format(item.artist,
-                    item.title, item.length))
-              self.fetch_song(item)
-              self.apply_metadata(item)
+            for item in lib.items(ui.decargs(args)):
+                log.info(u'echonest: {0} - {1} [{2}]'.format(item.artist,
+                        item.title, item.length))
+                song = self.fetch_song(item)
+                if not song is None:
+                    self._songs[item.path] = song
+                self.apply_metadata(item)
 
         cmd.func = func
         return [cmd]
