@@ -153,15 +153,32 @@ class EchonestMetadataPlugin(plugins.BeetsPlugin):
 
     def analyze(self, item):
         try:
+            log.info(u'echonest: uploading file, be patient')
             track = self._echofun(pyechonest.track.track_from_filename,
                     filename=item.path)
             if track is None:
                 raise Exception(u'failed to upload file')
+            ids = []
+            # FIXME: do this better
+            try:
+                ids = [track.song_id]
+            except Exception:
+                # for 'freshly' uploaded songs, we have a track but no song :/
+                result = {}
+                result['energy'] = track.energy
+                result['liveness'] = track.liveness
+                result['speechiness'] = track.speechiness
+                result['acousticness'] = track.acousticness
+                result['danceability'] = track.danceability
+                result['valence'] = track.valence
+                result['tempo'] = track.tempo
+                return result
             songs = self._echofun(pyechonest.song.profile,
-                    ids=[track.song_id], track_ids=[track.id],
+                    ids=ids, track_ids=[track.id],
                     buckets=['audio_summary'])
             if songs is None:
                 raise Exception(u'failed to retrieve info from upload')
+            # return self._pick_song(songs, item) # unsure ...
             return songs[0]
         except Exception as exc:
             log.error(u'echonest: analysis failed: {0}'.format(str(exc)))
@@ -234,10 +251,11 @@ class EchonestMetadataPlugin(plugins.BeetsPlugin):
             try:
                 song = method(item)
                 if not song is None:
-                    log.debug(u'echonest: got song through {0}: {1} - {2} [{3}]'
-                              .format(method.im_func.func_name,
-                              song.artist_name, song.title,
-                              song.audio_summary['duration']))
+                    if isinstance(song, pyechonest.song.Song):
+                        log.debug(u'echonest: got song through {0}: {1} - {2} [{3}]'
+                                  .format(method.im_func.func_name,
+                                  song.artist_name, song.title,
+                                  song.audio_summary['duration']))
                     return song
             except Exception as exc:
                 log.debug(u'echonest: profile failed: {0}'.format(str(exc)))
@@ -245,8 +263,13 @@ class EchonestMetadataPlugin(plugins.BeetsPlugin):
 
     def apply_metadata(self, item):
         if item.path in self._songs:
-            item.echonest_id = self._songs[item.path].id
-            for k, v in self._songs[item.path].audio_summary.iteritems():
+            # song can be a dict
+            if isinstance(self._songs[item.path], pyechonest.song.Song):
+                item.echonest_id = self._songs[item.path].id
+                values = self._songs[item.path].audio_summary
+            else:
+                values = self._songs[item.path]
+            for k, v in values.iteritems():
                 if k in self._attributes:
                     log.debug(u'echonest: metadata: {0} = {1}'.format(k, v))
                     item['echonest_{}'.format(k)] = v
