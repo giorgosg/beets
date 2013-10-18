@@ -37,6 +37,7 @@ def _splitstrip(string):
 class EchonestMetadataPlugin(plugins.BeetsPlugin):
     _songs = {}
     _attributes = []
+    _no_mapping = []
 
     def __init__(self):
         super(EchonestMetadataPlugin, self).__init__()
@@ -46,6 +47,7 @@ class EchonestMetadataPlugin(plugins.BeetsPlugin):
                 'codegen': None,
                 'attributes': u'energy,liveness,speechiness,acousticness,' \
                                'danceability,valence,tempo',
+                'no_mapping': u'tempo',
                 'mapping': u'very low,low,neutral,high,very high',
                 'speechiness_mapping': u'singing,probably singing,' \
                                         'probably talking,talking',
@@ -59,6 +61,8 @@ class EchonestMetadataPlugin(plugins.BeetsPlugin):
 
         self._attributes = _splitstrip(
                 config['echonest']['attributes'].get(unicode))
+        self._no_mapping = _splitstrip(
+                config['echonest']['no_mapping'].get(unicode))
         self.register_listener('import_task_start', self.fetch_song_task)
         self.register_listener('import_task_apply', self.apply_metadata_task)
 
@@ -66,6 +70,8 @@ class EchonestMetadataPlugin(plugins.BeetsPlugin):
                 config['echonest']['mapping'].get(unicode))
 
         for attr in self._attributes:
+            if attr in self._no_mapping:
+                continue
             mapping = global_mapping
             key = '{}_mapping'.format(attr)
             self.config.add({key:None})
