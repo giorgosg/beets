@@ -264,7 +264,7 @@ class EchonestMetadataPlugin(plugins.BeetsPlugin):
           for item in lib.items(ui.decargs(args)):
               log.info(u'echonest: {0} - {1} [{2}]'.format(item.artist,
                     item.title, item.length))
-              self._songs[item.path] = self.fetch_song(item)
+              self.fetch_song(item)
               self.apply_metadata(item)
 
         cmd.func = func
