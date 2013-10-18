@@ -51,6 +51,7 @@ class EchonestMetadataPlugin(plugins.BeetsPlugin):
                 'mapping': u'very low,low,neutral,high,very high',
                 'speechiness_mapping': u'singing,probably singing,' \
                                         'probably talking,talking',
+                'danceability_mapping': u'bed,couch,party,disco',
             })
 
         pyechonest.config.ECHO_NEST_API_KEY = \
