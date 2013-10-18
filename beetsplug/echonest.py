@@ -250,7 +250,7 @@ class EchonestMetadataPlugin(plugins.BeetsPlugin):
         for item in items:
             song = self.fetch_song(item)
             if not song is None:
-                self._songs[item.path] = self.fetch_song(item)
+                self._songs[item.path] = song
 
     def apply_metadata_task(self, task, session):
         for item in task.imported_items():
