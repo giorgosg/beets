@@ -9,7 +9,7 @@ import pyechonest.track
 
 log = logging.getLogger('beets')
 
-RETRY_INTERVAL = 10  # seconds
+RETRY_INTERVAL = 10 # seconds
 RETRIES = 10
 
 def mapper(field, mapping, min_v=0.0, max_v=1.0):
@@ -30,24 +30,49 @@ def mapper(field, mapping, min_v=0.0, max_v=1.0):
             return item.get(field)
     return fieldfunc
 
+def _splitstrip(string):
+    """Split string at comma and return the stripped values as array."""
+    return [ s.strip() for s in string.split(u',') ]
+
 class EchonestMetadataPlugin(plugins.BeetsPlugin):
     _songs = {}
+    _attributes = []
 
     def __init__(self):
         super(EchonestMetadataPlugin, self).__init__()
-        self.config.add({'auto': True, 'apikey': u'', 'codegen': u''})
+        self.config.add({
+                'auto': True,
+                'apikey': u'NY2KTZHQ0QDSHBAP6',
+                'codegen': None,
+                'attributes': u'energy,liveness,speechiness,acousticness,' \
+                               'danceability,valence,tempo',
+                'mapping': u'very low,low,neutral,high,very high',
+                'speechiness_mapping': u'singing,probably singing,' \
+                                        'probably talking,talking',
+            })
+
         pyechonest.config.ECHO_NEST_API_KEY = \
             config['echonest']['apikey'].get(unicode)
-        if config['echonest']['codegen'].get(unicode) != u'':
+        if config['echonest']['codegen'].get() is not None:
             pyechonest.config.CODEGEN_BINARY_OVERRIDE = \
                 config['echonest']['codegen'].get(unicode)
+
+        self._attributes = _splitstrip(
+                config['echonest']['attributes'].get(unicode))
         self.register_listener('import_task_start', self.fetch_song_task)
         self.register_listener('import_task_apply', self.apply_metadata_task)
 
-        self.template_fields['speechiness'] = mapper('speechiness',
-                ['singing', 'rapping', 'speaking'])
-        self.template_fields['danceability'] = mapper('danceability',
-                ['bed', 'couch', 'party', 'disco'])
+        global_mapping = _splitstrip(
+                config['echonest']['mapping'].get(unicode))
+
+        for attr in self._attributes:
+            mapping = global_mapping
+            key = '{}_mapping'.format(attr)
+            self.config.add({key:None})
+            if config['echonest'][key].get() is not None:
+                mapping = _splitstrip(
+                        config['echonest'][key].get(unicode))
+            self.template_fields[attr] = mapper(attr, mapping)
 
     def _echofun(self, func, **kwargs):
         for i in range(RETRIES):
@@ -157,8 +182,9 @@ class EchonestMetadataPlugin(plugins.BeetsPlugin):
         if item.path in self._songs:
             item.echonest_id = self._songs[item.path].id
             for k, v in self._songs[item.path].audio_summary.iteritems():
-                log.info(u'echonest: metadata: {0} - {1}'.format(k, v))
-                setattr(item, k, v)
+                if k in self._attributes:
+                    log.debug(u'echonest: metadata: {0} = {1}'.format(k, v))
+                    item[k] = v
             if config['import']['write'].get(bool):
                 log.info(u'echonest: writing metadata: {0}'
                          .format(util.displayable_path(item.path)))
