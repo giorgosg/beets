@@ -153,6 +153,10 @@ class EchonestMetadataPlugin(plugins.BeetsPlugin):
 
     def analyze(self, item):
         try:
+            # FIXME: convert the file to something supported?
+            if item.format.lower() not in ['wav', 'mp3', 'au', 'ogg', 'mp4', 'm4a']:
+                raise Exception(u'format {} not supported for upload'
+                        .format(item.format))
             log.info(u'echonest: uploading file, be patient')
             track = self._echofun(pyechonest.track.track_from_filename,
                     filename=item.path)
@@ -282,6 +286,13 @@ class EchonestMetadataPlugin(plugins.BeetsPlugin):
         else:
             log.warn(u'echonest: no metadata available')
 
+    def requires_update(self, item):
+        for attr in self._attributes:
+            if item.get('echonest_{}'.format(attr), None) is None:
+                return True
+        log.info(u'echonest: no update required')
+        return False
+
     def fetch_song_task(self, task, session):
         items = task.items if task.is_album else [task.item]
         for item in items:
@@ -296,15 +307,20 @@ class EchonestMetadataPlugin(plugins.BeetsPlugin):
     def commands(self):
         cmd = ui.Subcommand('echonest',
             help='Fetch metadata from the EchoNest')
+        cmd.parser.add_option('-f', '--force', dest='force',
+            action='store_true', default=False,
+            help='(re-)download information from the EchoNest')
 
         def func(lib, opts, args):
+            self.config.set_args(opts)
             for item in lib.items(ui.decargs(args)):
                 log.info(u'echonest: {0} - {1} [{2}]'.format(item.artist,
                         item.title, item.length))
-                song = self.fetch_song(item)
-                if not song is None:
-                    self._songs[item.path] = song
-                self.apply_metadata(item)
+                if self.config['force'] or self.requires_update(item):
+                    song = self.fetch_song(item)
+                    if not song is None:
+                        self._songs[item.path] = song
+                    self.apply_metadata(item)
 
         cmd.func = func
         return [cmd]
