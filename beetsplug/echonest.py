@@ -111,6 +111,12 @@ class EchonestMetadataPlugin(plugins.BeetsPlugin):
                 '>' : GTQuery,
         }
 
+    def attributes(self):
+        r = {}
+        for attr in self._attributes:
+            r['echonest_{}'.format(attr)] = library.NumericQuery
+        return r
+
     def _echofun(self, func, **kwargs):
         for i in range(RETRIES):
             try:

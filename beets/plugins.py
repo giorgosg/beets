@@ -63,6 +63,12 @@ class BeetsPlugin(object):
         """
         return {}
 
+    def attributes(self):
+        """Should return a dict mapping prefixes attributes to FieldQueries
+        subclasses.
+        """
+        return {}
+
     def track_distance(self, item, info):
         """Should return a Distance object to be added to the
         distance for every track comparison.
@@ -239,6 +245,16 @@ def queries():
     for plugin in find_plugins():
         out.update(plugin.queries())
     return out
+
+def attributes():
+    """Returns a dict mapping attribute names strings to
+    beet.library.FieldQueries subclasses for all loaded plugins.
+    """
+    out = {}
+    for plugin in find_plugins():
+        out.update(plugin.attributes())
+    return out
+
 
 def track_distance(item, info):
     """Gets the track distance calculated by all loaded plugins.

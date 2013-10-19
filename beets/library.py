@@ -1099,7 +1099,11 @@ class NumericQuery(FieldQuery):
 
     def __init__(self, field, pattern, fast=True):
         super(NumericQuery, self).__init__(field, pattern, fast)
-        self.numtype = self.kinds[field]
+        # FIXME: how to poke the numtype for flexible attributes?
+        if field in self.kinds:
+            self.numtype = self.kinds[field]
+        else:
+            self.numtype = float
 
         parts = pattern.split('..', 1)
         if len(parts) == 1:
@@ -1114,7 +1118,9 @@ class NumericQuery(FieldQuery):
             self.rangemax = self._convert(parts[1])
 
     def match(self, item):
-        value = getattr(item, self.field)
+        value = getattr(item, self.field, None)
+        if value is None:
+            return False
         if isinstance(value, basestring):
             value = self._convert(value)
 
@@ -1339,6 +1345,9 @@ def parse_query_part(part):
     prefixes = {':': RegexpQuery}
     prefixes.update(plugins.queries())
 
+    attributes = {}
+    attributes.update(plugins.attributes())
+
     if match:
         key = match.group(1)
         term = match.group(2).replace('\:', ':')
@@ -1346,6 +1355,8 @@ def parse_query_part(part):
         for pre, query_class in prefixes.items():
             if term.startswith(pre):
                 return key, term[len(pre):], query_class
+        if key in attributes:
+            return key, term, attributes[key]
         if key and NumericQuery.applies_to(key):
             return key, term, NumericQuery
         return key, term, SubstringQuery  # The default query type.
