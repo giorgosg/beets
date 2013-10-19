@@ -12,6 +12,12 @@ log = logging.getLogger('beets')
 RETRY_INTERVAL = 10 # seconds
 RETRIES = 10
 
+# for converting files
+import os
+from string import Template
+from subprocess import Popen
+DEVNULL = open(os.devnull, 'wb')
+
 def mapper(field, mapping, min_v=0.0, max_v=1.0):
     def fieldfunc(item):
         try:
@@ -157,15 +163,51 @@ class EchonestMetadataPlugin(plugins.BeetsPlugin):
                 return None
         return item.get('echonest_fingerprint')
 
+    def convert(self, item):
+        # stolen from Jakob Schnitzers convert plugin. config pending
+        dest = u'/tmp/beets-echo-upload.ogg'
+        source = item.path
+        # FIXME: use avconv?
+        command = u'ffmpeg -i $source -y -acodec libvorbis -vn -aq 2 $dest'.split(u' ')
+        log.info(u'echonest: encoding {0} to {1}'
+                .format(util.displayable_path(source),
+                util.displayable_path(dest)))
+        opts = []
+        for arg in command:
+            arg = arg.encode('utf-8')
+            opts.append(Template(arg).substitute({
+                'source':   source,
+                'dest':     dest
+            }))
+
+        try:
+            encode = Popen(opts, close_fds=True, stderr=DEVNULL)
+            encode.wait()
+        except Exception as exc:
+            log.error(u'echonest: encode failed: {0}'.format(str(exc)))
+            return None
+
+        if encode.returncode != 0:
+            log.info(u'echonest: encoding {0} failed ({1}). Cleaning up...'
+                     .format(util.displayable_path(source), encode.returncode))
+            util.remove(dest)
+            util.prune_dirs(os.path.dirname(dest))
+            return None
+        log.info(u'Finished encoding {0}'.format(util.displayable_path(source)))
+        return dest
+
     def analyze(self, item):
         try:
             # FIXME: convert the file to something supported?
+            source = item.path
             if item.format.lower() not in ['wav', 'mp3', 'au', 'ogg', 'mp4', 'm4a']:
-                raise Exception(u'format {} not supported for upload'
-                        .format(item.format))
+                source = self.convert(item)
+                if source is None:
+                    raise Exception(u'format {} not supported for upload'
+                            .format(item.format))
             log.info(u'echonest: uploading file, be patient')
             track = self._echofun(pyechonest.track.track_from_filename,
-                    filename=item.path)
+                    filename=source)
             if track is None:
                 raise Exception(u'failed to upload file')
             ids = []
